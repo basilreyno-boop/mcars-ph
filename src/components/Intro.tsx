@@ -1,6 +1,7 @@
 import { useEffect, useState, type MouseEvent, type PointerEvent } from "react";
 import { ChevronRight, Play } from "lucide-react";
 import { BootStage } from "@/components/Boot3D";
+import { GAME_VERSION } from "@/game/types";
 
 const COMIC_KEY = "mcars-ph-comic-v3";
 
@@ -62,7 +63,7 @@ export function BootScreen({
           className="h-10 w-auto max-w-[42%] border border-border object-cover object-center pxl-img sm:h-12"
         />
         <p className="font-pixel text-[10px] uppercase tracking-[0.22em] text-gold">
-          Fidelity Security
+          v{GAME_VERSION} · Fidelity Security
         </p>
       </div>
       <div className="absolute inset-x-0 bottom-0 px-5 pb-6 sm:px-8 sm:pb-8">

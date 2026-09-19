@@ -1,5 +1,6 @@
 import type { EnemyDef } from "./units";
 
+export const GAME_VERSION = "1.0.0";
 export const VIEW_W = 960;
 export const VIEW_H = 540;
 export const LOT_COUNT = 12;

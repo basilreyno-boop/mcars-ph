@@ -1,7 +1,7 @@
 import type { PointerEvent, MouseEvent } from "react";
 import { X } from "lucide-react";
 import { JedShot } from "@/components/JedPop";
-import { JED_SHOT } from "@/game/types";
+import { GAME_VERSION, JED_SHOT } from "@/game/types";
 
 function bindPress(fn: () => void) {
   return {
@@ -46,7 +46,7 @@ export function Press({ onClose }: { onClose: () => void }) {
           </button>
           <div className="absolute bottom-3 left-4 right-4">
             <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gold">
-              Press kit · Private build
+              Press kit · v{GAME_VERSION}
             </p>
             <h2 className="font-display text-3xl font-bold leading-none tracking-tight text-fg sm:text-4xl">
               Same-Day Release

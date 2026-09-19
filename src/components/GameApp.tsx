@@ -44,7 +44,7 @@ import { createInvaders } from "@/game/invaders";
 import { createDeal } from "@/game/deal";
 import { createCells } from "@/game/cells";
 import { LEVELS } from "@/game/levels";
-import { LOT_COUNT, formatKm, formatPesos, formatTime, type GameMode, type HudState, type PowerKind, type Screen } from "@/game/types";
+import { LOT_COUNT, formatKm, formatPesos, formatTime, GAME_VERSION, type GameMode, type HudState, type PowerKind, type Screen } from "@/game/types";
 import { LogoBadge } from "@/components/Logo";
 import { BootScreen, ComicIntro, hasSeenComic, markComicSeen } from "@/components/Intro";
 import { Garage } from "@/components/Garage";
@@ -963,7 +963,7 @@ function Title({
         {rank} · {cars}/{USED_CARS.length} units · {done}/{total} quota
       </p>
       <p className="mt-1 font-pixel text-[10px] uppercase tracking-[0.16em] text-muted">
-        Boss John live · Fidelity Security
+        v{GAME_VERSION} · Boss John live · Fidelity Security
       </p>
       <h1 className="mt-1 font-display text-3xl font-bold leading-none tracking-tight sm:text-4xl">
         Same-Day Release
