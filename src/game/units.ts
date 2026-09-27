@@ -18,6 +18,8 @@ export type LotEnemy = EnemyDef & {
   facing: number;
   anim: number;
   alive: boolean;
+  /** Seconds left knocked down. A downed foe can't hurt Jed; any hit finishes him. */
+  stun: number;
 };
 
 type GridPal = Record<string, string>;
@@ -365,6 +367,7 @@ export function bootEnemies(defs: EnemyDef[]): LotEnemy[] {
     facing: 1,
     anim: Math.random() * 4,
     alive: true,
+    stun: 0,
   }));
 }
 

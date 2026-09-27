@@ -22,7 +22,11 @@ npm run dev
 | `npm run typecheck` | TypeScript |
 | `npm run build` | Production build |
 
-Controls: **A** left, **D** right, **W / space** jump, **S** down. On phones: DualShock stick + ✕ / ○ / □ / △.
+Controls: **A** left, **D** right, **W / space** jump, **S** down, **F** hit, **E** grab / swap / throw (mouse: left hit, right grab). On phones: DualShock stick + ✕ jump / ○ hit / □ down / △ grab.
+
+**Weapons (lots):** tools lie on the lot and drop from every KO — Tire Iron, Torque Wrench, Price Tag Gun (8 tags), Plate Frisbee. One GRAB button picks up, swaps with the floor, or throws what you hold. Thrown tools and bare-hand shoves knock foes down; hit or stomp a downed foe to FINISH for double pay.
+
+**Field Guide:** the first time a new foe, hazard or weapon appears, the lot freezes and briefs you. Pause → Replay tutorial resets it.
 
 ## v1.0.0
 
