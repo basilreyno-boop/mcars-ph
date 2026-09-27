@@ -16,6 +16,21 @@ import {
 import { drawImg, drawSheet, loadAssets, bgFor, emptyAssets, ensureBg, prefetchMaps, type GameAssets } from "./assets";
 import { drawSkyline, fitView } from "./view";
 import {
+  WEAPONS,
+  dropItem,
+  foeDrop,
+  drawItem,
+  itemBox,
+  nearestItem,
+  paintWeapon,
+  stepItem,
+  throwItem,
+  type Bullet,
+  type Held,
+  type WeaponItem,
+} from "./arsenal";
+import { clearGuideSeen, drawGuide, loadGuideSeen, saveGuideSeen, type GuideId } from "./guide";
+import {
   freshUnlocks,
   loadCareer,
   rankFor,
@@ -125,7 +140,7 @@ export async function createGame(
 	});
 	const input = new Input();
 	const sfx = new Sfx();
-	input.attach();
+	input.attach(canvas);
 	canvas.tabIndex = 0;
 	canvas.setAttribute("aria-label", "MCARS PH game");
 	const save = loadSave();
@@ -212,6 +227,19 @@ export async function createGame(
 	let reduced =
 		typeof window !== "undefined" &&
 		!!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+	const touchUI = typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches;
+	let held: Held | null = null;
+	let items: WeaponItem[] = [];
+	let bullets: Bullet[] = [];
+	let atkCd = 0;
+	let swingT = 0;
+	let emptyNagT = 0;
+	let weaponTagT = 0;
+	const guideSeen = loadGuideSeen();
+	let guideId: GuideId | null = null;
+	let guideT = 0;
+	let guideAt: { x: number; y: number } | null = null;
+	let guideStunPending = false;
 	function loadout() {
 		return resolveLoadout(save.equipped);
 	}
@@ -316,7 +344,7 @@ export async function createGame(
 			warranty,
 			grow: player.grow > 0,
 			buffs,
-			popup: popupT > 0
+			popup: popupT > 0 && !guideId
 				? {
 					id: popupId,
 					title: popupTitle,
@@ -350,7 +378,9 @@ export async function createGame(
 			score: coinsGot.size + pesosGot.size,
 			wave: 0,
 			padAction: "Jump",
-			padExtra: null,
+			padExtra: "Hit",
+			padTri: !held ? "Grab" : nearestItem(items, player.x + player.w / 2, player.y + player.h) >= 0 ? "Swap" : "Throw",
+			weapon: held ? WEAPONS[held.kind].name : "",
 			outfits: save.outfits,
 			equippedOutfit: save.equippedOutfit,
 			combo,
@@ -487,6 +517,18 @@ export async function createGame(
 		bootMovers();
 		bootTraffic();
 		foes = bootEnemies(seedEnemies(level.width, 500, level.enemies));
+		held = null;
+		items = [];
+		bullets = [];
+		atkCd = 0;
+		swingT = 0;
+		emptyNagT = 0;
+		weaponTagT = 0;
+		guideId = null;
+		guideT = 0;
+		guideAt = null;
+		guideStunPending = false;
+		seedArsenal();
 		johnX = spawn.x - 48;
 		johnY = spawn.y + PH;
 		johnFace = 1;
@@ -510,6 +552,7 @@ export async function createGame(
 		input.clearTouch();
 		sfx.unlock();
 		canvas.focus({ preventScroll: true });
+		if (!guideSeen.has("controls")) openGuide("controls", null);
 		pushHud();
 	}
 	function firePopup(kind: PopupKind, title: string, copy: string, force = false) {
@@ -875,6 +918,10 @@ export async function createGame(
 		ring(player.x + player.w / 2, player.y + player.h / 2, "rgba(225,6,0,0.85)", 10, 140);
 		deaths += 1;
 		killLock = KILL_LOCK;
+		if (held) {
+			dropItem(items, held.kind, held.ammo, player.x + player.w / 2, player.y + player.h - 6, 0, -220);
+			held = null;
+		}
 		hitstop = lite ? 0 : .05;
 		if (combo > 1) {
 			floaters.push({
@@ -994,27 +1041,237 @@ export async function createGame(
 		}
 	}
 
-	function smashFoe(e: LotEnemy, tag: string, color: string) {
+	function stunFoe(e: LotEnemy, secs: number, dir: number) {
+		e.stun = Math.max(e.stun, secs);
+		e.x += dir * 18;
+		e.ox += dir * 18;
+		burst(e.x + e.w / 2, e.y + e.h / 2, 8, "#f5d76e", 140);
+		floaters.push({ x: e.x, y: e.y, text: "DOWN", life: 0.55 });
+		sfx.stomp();
+		trauma = Math.min(1, trauma + 0.1);
+		if (!guideSeen.has("stun")) guideStunPending = true;
+	}
+	/** Any hit on a downed foe is a FINISH: instant KO at double pay. */
+	function smashFoe(e: LotEnemy, tag: string, color: string, dmg = 1) {
 		if (!e.alive) return;
-		e.hp -= 1;
+		const finish = e.stun > 0;
+		e.hp -= finish ? e.hp : dmg;
 		if (e.hp > 0) {
-			e.x += (e.x < player.x ? -28 : 28);
-			burst(e.x + e.w / 2, e.y + e.h / 2, 8, color, 140);
-			sfx.stomp();
+			stunFoe(e, 0.7, e.x < player.x ? -1 : 1);
 			return;
 		}
 		e.alive = false;
+		e.stun = 0;
 		save.stompTotal += 1;
 		sfx.stomp();
-		burst(e.x + e.w / 2, e.y + e.h / 2, 12, color, 180);
-		floaters.push({ x: e.x, y: e.y, text: tag, life: 0.7 });
-		const pay = Math.round((e.kind === "repo" ? 4000 : 2500) * loadout().pesoMul);
+		burst(e.x + e.w / 2, e.y + e.h / 2, finish ? 16 : 12, finish ? "#f5d76e" : color, 180);
+		floaters.push({ x: e.x, y: e.y, text: finish ? "FINISH" : tag, life: 0.7 });
+		const drop = foeDrop(e.kind);
+		dropItem(items, drop, WEAPONS[drop].ammo, e.x + e.w / 2, e.y + e.h / 2, (Math.random() - 0.5) * 140, -320);
+		const pay = Math.round((e.kind === "repo" ? 4000 : 2500) * loadout().pesoMul * (finish ? 2 : 1));
 		pesos += pay;
 		save.careerPesos += pay;
 		markSave();
 		tryMissions(false);
 		hitstop = lite ? 0 : 0.04;
 		trauma = Math.min(1, trauma + 0.16);
+	}
+	function seedArsenal() {
+		dropItem(items, "iron", Infinity, spawn.x + 190, spawn.y, 0, 0);
+		dropItem(items, "wrench", Infinity, level.width * 0.46, spawn.y - 40, 0, 0);
+		for (const it of items) it.grace = 0;
+	}
+	function openGuide(id: GuideId, at: { x: number; y: number } | null) {
+		guideId = id;
+		guideT = 0;
+		guideAt = at;
+		sfx.unlockChime();
+		pushHud();
+	}
+	function closeGuide() {
+		if (!guideId) return;
+		guideSeen.add(guideId);
+		saveGuideSeen(guideSeen);
+		guideId = null;
+		guideAt = null;
+		player.invuln = Math.max(player.invuln, 0.35);
+		pushHud();
+	}
+	/** First time a foe, hazard or weapon comes on screen, freeze and brief the player. */
+	function scanGuide(): boolean {
+		if (guideStunPending) {
+			guideStunPending = false;
+			if (!guideSeen.has("stun")) {
+				const e = foes.find((f) => f.alive && f.stun > 0);
+				openGuide("stun", e ? { x: e.x + e.w / 2, y: e.y + e.h / 2 } : null);
+				return true;
+			}
+		}
+		const px = player.x + player.w / 2;
+		const reach = Math.min(520, vw * 0.6);
+		const inView = (x: number, y: number) =>
+			x > cam.x + 24 && x < cam.x + vw - 24 && y > cam.y + 24 && y < cam.y + vh - 24 && Math.abs(x - px) < reach;
+		for (const e of foes) {
+			if (!e.alive || guideSeen.has(e.kind)) continue;
+			const x = e.x + e.w / 2;
+			const y = e.y + e.h / 2;
+			if (inView(x, y)) {
+				openGuide(e.kind, { x, y });
+				return true;
+			}
+		}
+		for (let hi = 0; hi < level.hazards.length; hi++) {
+			const h = level.hazards[hi];
+			if (smashed.has(hi) || guideSeen.has(h.kind)) continue;
+			const x = h.x + h.w / 2;
+			const y = h.y + h.h / 2;
+			if (inView(x, y)) {
+				openGuide(h.kind, { x, y });
+				return true;
+			}
+		}
+		for (const it of items) {
+			if (it.live || it.vy !== 0 || guideSeen.has(it.kind)) continue;
+			const y = it.y - 6;
+			if (inView(it.x, y)) {
+				openGuide(it.kind, { x: it.x, y });
+				return true;
+			}
+		}
+		return false;
+	}
+	function attack() {
+		const face = player.facing;
+		const cx = player.x + player.w / 2;
+		if (held && WEAPONS[held.kind].reach === 0) {
+			if (held.ammo <= 0) {
+				atkCd = 0.2;
+				sfx.land();
+				if (emptyNagT <= 0) {
+					floaters.push({ x: cx - 30, y: player.y - 10, text: "EMPTY — THROW IT", life: 0.9 });
+					emptyNagT = 1.2;
+				}
+				return;
+			}
+			held.ammo -= 1;
+			bullets.push({ x: cx + face * 18, y: player.y + player.h * 0.42, vx: face * 980 + player.vx * 0.3, life: 0.62 });
+			atkCd = WEAPONS[held.kind].cd;
+			weaponTagT = 1.2;
+			sfx.slash();
+			trauma = Math.min(1, trauma + 0.04);
+			camKick = Math.min(12, camKick + 1.5);
+			pushHud();
+			return;
+		}
+		const def = held ? WEAPONS[held.kind] : null;
+		const reach = def ? def.reach : 22;
+		atkCd = def ? def.cd : 0.3;
+		swingT = 0.16;
+		sfx.slash();
+		const box = {
+			x: face > 0 ? player.x + player.w - 6 : player.x - reach + 6,
+			y: player.y - 4,
+			w: reach,
+			h: player.h + 8,
+		};
+		let landed = false;
+		for (const e of foes) {
+			if (!e.alive || !aabb(box, e)) continue;
+			landed = true;
+			if (def && held) smashFoe(e, held.kind === "iron" ? "BONK" : "CLOSE", def.color, def.dmg);
+			else if (e.stun > 0) smashFoe(e, "FINISH", "#f5d76e");
+			else stunFoe(e, 1.1, face);
+		}
+		if (landed) {
+			hitstop = lite ? 0 : 0.05;
+			trauma = Math.min(1, trauma + 0.12);
+		}
+	}
+	/** Hotline-style: one GRAB button picks up, swaps with the floor, or throws what you hold. */
+	function tickArsenal(dt: number) {
+		atkCd = Math.max(0, atkCd - dt);
+		swingT = Math.max(0, swingT - dt);
+		emptyNagT = Math.max(0, emptyNagT - dt);
+		weaponTagT = Math.max(0, weaponTagT - dt);
+		const cx = player.x + player.w / 2;
+		if (input.grabPressed) {
+			const n = nearestItem(items, cx, player.y + player.h);
+			if (n >= 0) {
+				const it = items[n];
+				items.splice(n, 1);
+				if (held) {
+					dropItem(items, held.kind, held.ammo, cx - player.facing * 8, player.y + player.h - 4, -player.facing * 70, -180);
+					floaters.push({ x: cx - 16, y: player.y - 8, text: "SWAP", life: 0.5 });
+				}
+				held = { kind: it.kind, ammo: it.ammo };
+				weaponTagT = 1.6;
+				sfx.peso();
+				burst(cx, player.y + player.h * 0.5, 6, WEAPONS[it.kind].color, 100);
+				pushHud();
+			} else if (held) {
+				throwItem(items, held, cx + player.facing * 14, player.y + player.h * 0.45, player.facing, player.vx);
+				held = null;
+				swingT = 0.14;
+				sfx.slash();
+				camKick = Math.min(12, camKick + 2);
+				pushHud();
+			}
+		}
+		if (input.slashPressed && atkCd <= 0) attack();
+		const sol = solids();
+		for (let n = items.length - 1; n >= 0; n--) {
+			const it = items[n];
+			stepItem(it, dt, sol, level.oneWays, level.width);
+			if (it.y > level.height + 80) {
+				items.splice(n, 1);
+				continue;
+			}
+			if (!it.live) continue;
+			const box = itemBox(it);
+			for (let fi = 0; fi < foes.length; fi++) {
+				const e = foes[fi];
+				if (!e.alive || fi === it.skip || !aabb(box, e)) continue;
+				const dir = it.vx >= 0 ? 1 : -1;
+				if (e.stun > 0) smashFoe(e, "FINISH", "#f5d76e");
+				else stunFoe(e, WEAPONS[it.kind].throwStun, dir);
+				hitstop = lite ? 0 : 0.04;
+				it.skip = fi;
+				it.hits += 1;
+				if (!(it.kind === "plate" && it.hits < 2)) {
+					it.vx = -dir * 120;
+					it.vy = -240;
+					it.flatT = 0;
+				}
+				break;
+			}
+		}
+		for (let n = bullets.length - 1; n >= 0; n--) {
+			const b = bullets[n];
+			b.life -= dt;
+			b.x += b.vx * dt;
+			const bb = { x: b.x - 5, y: b.y - 3, w: 10, h: 6 };
+			let dead = b.life <= 0;
+			if (!dead) {
+				for (const s2 of sol) {
+					if (aabb(bb, s2)) {
+						dead = true;
+						break;
+					}
+				}
+			}
+			if (!dead) {
+				for (const e of foes) {
+					if (!e.alive || !aabb(bb, e)) continue;
+					smashFoe(e, "TAGGED", "#f472b6");
+					dead = true;
+					break;
+				}
+			}
+			if (dead) {
+				burst(b.x, b.y, 4, "#f472b6", 90);
+				bullets.splice(n, 1);
+			}
+		}
 	}
 	function tickAllies(dt: number, hit: Rect): boolean {
 		const cx = player.x + player.w / 2;
@@ -1046,6 +1303,15 @@ export async function createGame(
 		for (const e of foes) {
 			if (!e.alive) continue;
 			e.anim += dt;
+			if (e.stun > 0) {
+				e.stun = Math.max(0, e.stun - dt);
+				if (aabb(hit, e) && player.vy > 70 && player.y + player.h - 10 <= e.y + 24) {
+					player.vy = JUMP_V * 0.55;
+					player.grounded = false;
+					smashFoe(e, "FINISH", "#f5d76e");
+				}
+				continue;
+			}
 			const amp = e.patrol ?? 70;
 			const spd = e.speed ?? 70;
 			if (e.kind === "repo" && Math.abs(e.x - player.x) < 260) {
@@ -1091,6 +1357,12 @@ export async function createGame(
 		}
 		if (screen === "win") return;
 		if (screen !== "play") return;
+		if (guideId) {
+			guideT += dt;
+			if (guideT > 0.5 && (input.jumpPressed || input.slashPressed || input.grabPressed)) closeGuide();
+			return;
+		}
+		if (scanGuide()) return;
 		clock += dt;
 		const hadPop = popupT > 0;
 		popupT = Math.max(0, popupT - dt);
@@ -1385,6 +1657,7 @@ export async function createGame(
 				pushHud();
 			}
 		}
+		tickArsenal(dt);
 		if (tickAllies(dt, hit) === false) return;
 		for (let i = 0; i < level.checkpoints.length; i++) {
 			const c = level.checkpoints[i];
@@ -1458,6 +1731,70 @@ export async function createGame(
 		}
 		const runF = 6 + Math.min(9, Math.abs(player.vx) / 32);
 		player.anim += dt * (player.grounded && Math.abs(player.vx) > 20 ? runF : 5.4);
+	}
+	function drawHeld() {
+		const f = player.facing;
+		const cx = player.x + player.w / 2;
+		const sw = swingT > 0 ? swingT / 0.16 : 0;
+		if (swingT > 0 && (!held || WEAPONS[held.kind].reach > 0)) {
+			const reach = held ? WEAPONS[held.kind].reach : 22;
+			ctx.save();
+			ctx.strokeStyle = held ? WEAPONS[held.kind].color : "#f4f4f5";
+			ctx.globalAlpha = sw * 0.7;
+			ctx.lineWidth = 4;
+			ctx.beginPath();
+			const r = reach + player.w / 2;
+			if (f > 0) ctx.arc(cx, player.y + player.h * 0.5, r, -1.2, 1.0);
+			else ctx.arc(cx, player.y + player.h * 0.5, r, Math.PI - 1.0, Math.PI + 1.2);
+			ctx.stroke();
+			ctx.restore();
+		}
+		if (!held) return;
+		ctx.save();
+		ctx.translate(cx + f * 12, player.y + player.h * 0.55);
+		ctx.scale(f, 1);
+		const ang = held.kind === "pricegun" ? 0 : sw > 0 ? -1.6 + (1 - sw) * 2.6 : -0.9;
+		ctx.rotate(ang);
+		paintWeapon(ctx, held.kind, 0.9);
+		ctx.restore();
+		const ranged = WEAPONS[held.kind].reach === 0;
+		if (weaponTagT > 0 || ranged) {
+			ctx.save();
+			ctx.globalAlpha = ranged ? 1 : Math.min(1, weaponTagT * 2);
+			ctx.fillStyle = held.ammo <= 0 && ranged ? "#e10600" : WEAPONS[held.kind].color;
+			ctx.font = "700 10px 'Barlow Condensed', sans-serif";
+			ctx.textAlign = "center";
+			ctx.fillText(ranged ? `${WEAPONS[held.kind].short} ${held.ammo}/${WEAPONS[held.kind].ammo}` : WEAPONS[held.kind].name, cx, player.y - 12);
+			ctx.restore();
+		}
+	}
+	function drawWeaponChip() {
+		// Bottom-centre: the stick and face buttons own the corners on every device.
+		const w = 236;
+		const x = Math.round((vw - w) / 2);
+		const y = vh - 40;
+		ctx.save();
+		ctx.fillStyle = "rgba(10,10,14,0.82)";
+		ctx.fillRect(x, y, w, 30);
+		ctx.fillStyle = held ? WEAPONS[held.kind].color : "#52525b";
+		ctx.fillRect(x, y, 4, 30);
+		if (held) {
+			ctx.save();
+			ctx.translate(x + 26, y + 15);
+			paintWeapon(ctx, held.kind, 0.9);
+			ctx.restore();
+		}
+		ctx.fillStyle = "#f4f4f5";
+		ctx.font = "700 13px 'Barlow Condensed', sans-serif";
+		const ranged = held && WEAPONS[held.kind].reach === 0;
+		const label = held ? (ranged ? `${WEAPONS[held.kind].name}  ${held.ammo}` : WEAPONS[held.kind].name) : "BARE HANDS";
+		ctx.fillText(label, x + (held ? 46 : 12), y + 19);
+		ctx.fillStyle = "#a1a1aa";
+		ctx.font = "600 10px 'Barlow Condensed', sans-serif";
+		ctx.textAlign = "right";
+		if (!held) ctx.fillText(touchUI ? "○ SHOVE  △ GRAB" : "F SHOVE  E GRAB", x + w - 8, y + 19);
+		else ctx.fillText(touchUI ? "△ THROW" : "E THROW", x + w - 8, y + 19);
+		ctx.restore();
 	}
 	function drawSolid(s: Rect, oneWay: boolean) {
 		const top = oneWay ? "#9aa0b4" : "#d8dae4";
@@ -2010,12 +2347,48 @@ export async function createGame(
 		}
 		for (const e of foes) {
 			if (!e.alive) continue;
+			if (e.stun > 0) {
+				const fx = e.x + e.w / 2;
+				const fy = e.y + e.h;
+				const down = Math.min(1, e.stun * 6);
+				ctx.save();
+				ctx.translate(fx, fy - 10 * down);
+				ctx.rotate(-e.facing * (Math.PI / 2) * down);
+				drawFoe(ctx, e.kind, 0, 10 * down, e.facing, 0);
+				ctx.restore();
+				ctx.fillStyle = "#f5d76e";
+				for (let k = 0; k < 3; k++) {
+					const a = time * 6 + k * 2.1;
+					ctx.fillRect(fx + Math.cos(a) * 16 - 2, fy - 30 + Math.sin(a) * 4, 4, 4);
+				}
+				continue;
+			}
 			drawFoe(ctx, e.kind, e.x + e.w / 2, e.y + e.h, e.facing, time + e.anim);
 			ctx.fillStyle = e.kind === "repo" ? "#e10600" : e.kind === "rival" ? "#60a5fa" : "#d4a017";
 			ctx.font = "700 9px 'Barlow Condensed', sans-serif";
 			ctx.textAlign = "center";
 			ctx.fillText(foeTag(e.kind), e.x + e.w / 2, e.y - 4);
 			ctx.textAlign = "left";
+		}
+		const nearIdx = screen === "play" ? nearestItem(items, player.x + player.w / 2, player.y + player.h) : -1;
+		for (let n = 0; n < items.length; n++) {
+			const it = items[n];
+			drawItem(ctx, it, time, n === nearIdx);
+			if (n === nearIdx) {
+				ctx.fillStyle = "#f4f4f5";
+				ctx.font = "700 10px 'Barlow Condensed', sans-serif";
+				ctx.textAlign = "center";
+				ctx.fillText(`${touchUI ? "△" : "E"}  ${held ? "SWAP" : "GRAB"}`, it.x, it.y - 34);
+				ctx.textAlign = "left";
+			}
+		}
+		for (const b of bullets) {
+			ctx.fillStyle = "#0a0a0c";
+			ctx.fillRect(b.x - 6, b.y - 4, 12, 8);
+			ctx.fillStyle = "#f472b6";
+			ctx.fillRect(b.x - 5, b.y - 3, 10, 6);
+			ctx.fillStyle = "#f4f4f5";
+			ctx.fillRect(b.x - 1, b.y - 2, 4, 2);
 		}
 		if (buff.fidelity > 0) {
 			const cx = player.x + player.w / 2;
@@ -2113,6 +2486,7 @@ export async function createGame(
 		}
 		for (const g of ghosts) drawJed(g, .36 * (g.life / g.max));
 		drawJed();
+		if (screen === "play" || screen === "pause" || screen === "win") drawHeld();
 		for (const f of flyers) {
 			const a = Math.max(0, f.life / f.max);
 			const grow = 0.7 + (1 - a) * 0.9;
@@ -2143,6 +2517,11 @@ export async function createGame(
 			ctx.fillText(level.kicker, vw / 2, 118);
 			ctx.textAlign = "left";
 			ctx.globalAlpha = 1;
+		}
+		if (screen === "play" || screen === "pause") drawWeaponChip();
+		if (guideId && (screen === "play" || screen === "pause")) {
+			const spot = guideAt ? { x: guideAt.x - cam.x, y: guideAt.y - cam.y } : null;
+			drawGuide(ctx, guideId, touchUI, guideT, vw, vh, spot, time + guideT, reduced);
 		}
 	}
 	function fit() {
@@ -2219,6 +2598,11 @@ export async function createGame(
 			if (window.__controlsTest) delete window.__controlsTest;
 		},
 		setTouch: (t) => applyTouch(input, t),
+		resetGuide: () => {
+			clearGuideSeen();
+			guideSeen.clear();
+			if (screen === "play" || screen === "pause") openGuide("controls", null);
+		},
 		equipCar: (id: string) => {
 			if (!save.cars.includes(id)) return;
 			save.equipped = id;
@@ -2261,7 +2645,21 @@ export async function createGame(
 			clock,
 			combo,
 			comboMax,
-		})
+			weapon: held?.kind ?? null,
+			ammo: held ? held.ammo : 0,
+			items: items.length,
+			stunned: foes.filter((e) => e.alive && e.stun > 0).length,
+			foesLeft: foes.filter((e) => e.alive).length,
+			foes: foes.filter((e) => e.alive).map((e) => ({ kind: e.kind, x: e.x, stun: e.stun })),
+			guide: guideId,
+		}),
+		dismissGuide: () => closeGuide(),
+		warp: (x: number, y: number) => {
+			player.x = x;
+			player.y = y;
+			player.vx = 0;
+			player.vy = 0;
+		},
 	};
 	pushHud();
 	return handle;
@@ -2286,7 +2684,16 @@ declare global {
         clock: number;
         coins: number;
         pesos?: number;
+        weapon?: string | null;
+        ammo?: number;
+        items?: number;
+        stunned?: number;
+        foesLeft?: number;
+        foes?: { kind: string; x: number; stun: number }[];
+        guide?: string | null;
       };
+      dismissGuide?: () => void;
+      warp?: (x: number, y: number) => void;
     };
   }
 }

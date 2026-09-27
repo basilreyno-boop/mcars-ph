@@ -257,6 +257,7 @@ export function GamePad({
   live,
   hintCross,
   hintCircle,
+  hintTriangle = "UP",
   onStick,
   onCross,
   onCircle,
@@ -266,6 +267,7 @@ export function GamePad({
   live: boolean;
   hintCross: string;
   hintCircle: string;
+  hintTriangle?: string;
   onStick: StickFn;
   onCross: HoldFn;
   onCircle: HoldFn;
@@ -283,7 +285,7 @@ export function GamePad({
 
       <div className="ps-diamond pointer-events-none relative shrink-0">
         <div className="absolute left-1/2 top-0 -translate-x-1/2">
-          <Face label="Triangle" sub="UP" glyph={GlyphTri} tone="tri" onHold={onTriangle} live={live} retrigger />
+          <Face label="Triangle" sub={hintTriangle} glyph={GlyphTri} tone="tri" onHold={onTriangle} live={live} retrigger />
         </div>
         <div className="absolute bottom-0 left-1/2 -translate-x-1/2">
           <Face label="Cross" sub={hintCross} glyph={GlyphX} tone="cross" onHold={onCross} live={live} retrigger />

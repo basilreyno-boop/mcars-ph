@@ -14,6 +14,8 @@ const GAME_CODES = new Set([
   "KeyF",
   "KeyJ",
   "KeyK",
+  "KeyE",
+  "KeyL",
 ]);
 
 function radialDeadzone(x: number, y: number, dz = 0.18) {
@@ -31,6 +33,7 @@ export class Input {
   touchJump = false;
   touchSlash = false;
   touchDown = false;
+  touchGrab = false;
   touchAnalogX = 0;
   moveX = 0;
   jumpHeld = false;
@@ -38,22 +41,34 @@ export class Input {
   slashHeld = false;
   slashPressed = false;
   downHeld = false;
+  grabPressed = false;
   pausePressed = false;
   restartPressed = false;
   private prevJump = false;
   private prevSlash = false;
+  private prevGrab = false;
   private prevPause = false;
   private prevRestart = false;
   private attached = false;
   private jumpLatch = false;
   private slashLatch = false;
+  private grabLatch = false;
+  private el: HTMLElement | null = null;
 
   private onDown = (e: KeyboardEvent) => {
     if (GAME_CODES.has(e.code)) e.preventDefault();
     this.keys.add(e.code);
     if (e.code === "Space" || e.code === "KeyW" || e.code === "ArrowUp") this.jumpLatch = true;
     if (e.code === "KeyF" || e.code === "KeyJ" || e.code === "KeyK") this.slashLatch = true;
+    if (e.code === "KeyE" || e.code === "KeyL") this.grabLatch = true;
   };
+  /** Desktop mouse: left = hit, right = grab/throw. Touch taps stay on the pad overlay. */
+  private onPointer = (e: PointerEvent) => {
+    if (e.pointerType !== "mouse") return;
+    if (e.button === 0) this.slashLatch = true;
+    else if (e.button === 2) this.grabLatch = true;
+  };
+  private onMenu = (e: Event) => e.preventDefault();
   private onUp = (e: KeyboardEvent) => {
     this.keys.delete(e.code);
   };
@@ -65,9 +80,14 @@ export class Input {
     if (document.hidden) this.onBlur();
   };
 
-  attach() {
+  attach(el?: HTMLElement) {
     if (this.attached) return;
     this.attached = true;
+    if (el) {
+      this.el = el;
+      el.addEventListener("pointerdown", this.onPointer);
+      el.addEventListener("contextmenu", this.onMenu);
+    }
     window.addEventListener("keydown", this.onDown, { passive: false });
     window.addEventListener("keyup", this.onUp);
     window.addEventListener("blur", this.onBlur);
@@ -77,6 +97,11 @@ export class Input {
   detach() {
     if (!this.attached) return;
     this.attached = false;
+    if (this.el) {
+      this.el.removeEventListener("pointerdown", this.onPointer);
+      this.el.removeEventListener("contextmenu", this.onMenu);
+      this.el = null;
+    }
     window.removeEventListener("keydown", this.onDown);
     window.removeEventListener("keyup", this.onUp);
     window.removeEventListener("blur", this.onBlur);
@@ -89,9 +114,16 @@ export class Input {
     this.touchJump = false;
     this.touchSlash = false;
     this.touchDown = false;
+    this.touchGrab = false;
     this.touchAnalogX = 0;
     this.jumpLatch = false;
     this.slashLatch = false;
+    this.grabLatch = false;
+  }
+
+  latchGrab() {
+    this.grabLatch = true;
+    this.touchGrab = true;
   }
 
   latchJump() {
@@ -114,6 +146,7 @@ export class Input {
       c.has("Space") || c.has("KeyW") || c.has("ArrowUp") || this.touchJump || this.jumpLatch;
     let slash = c.has("KeyF") || c.has("KeyJ") || c.has("KeyK") || this.touchSlash || this.slashLatch;
     let down = c.has("KeyS") || c.has("ArrowDown") || this.touchDown;
+    let grab = c.has("KeyE") || c.has("KeyL") || this.touchGrab;
     let pause = c.has("Escape") || c.has("KeyP");
     let restart = c.has("KeyR");
 
@@ -126,6 +159,7 @@ export class Input {
       if (p.buttons[15]?.pressed) x += 1;
       if (p.buttons[0]?.pressed || p.buttons[1]?.pressed || p.buttons[12]?.pressed) jump = true;
       if (p.buttons[2]?.pressed || p.buttons[5]?.pressed) slash = true;
+      if (p.buttons[3]?.pressed || p.buttons[4]?.pressed) grab = true;
       if (p.buttons[13]?.pressed || stick.y > 0.5) down = true;
       if (p.buttons[9]?.pressed) pause = true;
       if (p.buttons[8]?.pressed) restart = true;
@@ -141,6 +175,9 @@ export class Input {
     this.slashPressed = (slash && !this.prevSlash) || this.slashLatch;
     this.slashLatch = false;
     this.prevSlash = this.slashHeld;
+    this.grabPressed = (grab && !this.prevGrab) || this.grabLatch;
+    this.grabLatch = false;
+    this.prevGrab = grab;
     this.pausePressed = pause && !this.prevPause;
     this.prevPause = pause;
     this.restartPressed = restart && !this.prevRestart;
@@ -156,6 +193,7 @@ export type TouchState = {
   up?: boolean;
   down?: boolean;
   analogX?: number;
+  grab?: boolean;
 };
 
 export function applyTouch(input: Input, t: TouchState) {
@@ -167,4 +205,6 @@ export function applyTouch(input: Input, t: TouchState) {
   if (t.slash === true) input.latchSlash();
   else if (t.slash === false) input.touchSlash = false;
   if (t.down !== undefined) input.touchDown = t.down;
+  if (t.grab === true) input.latchGrab();
+  else if (t.grab === false) input.touchGrab = false;
 }

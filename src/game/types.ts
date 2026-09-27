@@ -156,7 +156,10 @@ export type HudState = {
   score: number;
   wave: number;
   padAction: "Jump" | "Hop" | "Fire" | "Pick" | "Slash";
-  padExtra: "Slash" | null;
+  padExtra: "Slash" | "Hit" | null;
+  /** Triangle label on the touch pad. Lots mode uses it for grab / throw. */
+  padTri?: "Grab" | "Throw" | "Swap";
+  weapon?: string;
   outfits: string[];
   equippedOutfit: string;
   combo: number;
@@ -175,7 +178,8 @@ export type GameHandle = {
   resume: () => void;
   restart: () => void;
   destroy: () => void;
-  setTouch: (t: { left?: boolean; right?: boolean; jump?: boolean; slash?: boolean; up?: boolean; down?: boolean; analogX?: number }) => void;
+  setTouch: (t: { left?: boolean; right?: boolean; jump?: boolean; slash?: boolean; up?: boolean; down?: boolean; analogX?: number; grab?: boolean }) => void;
+  resetGuide?: () => void;
   equipCar: (id: string) => void;
   equipOutfit: (id: string) => void;
   back: () => void;

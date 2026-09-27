@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent, type PointerEvent } from "react";
 import {
+  BookOpen,
   ChevronRight,
   Clock,
   Flag,
@@ -368,10 +369,13 @@ export function GameApp() {
     }
   }
 
-  function touch(side: "jump" | "slash" | "up", on: boolean) {
+  function touch(side: "jump" | "slash" | "up" | "grab", on: boolean) {
     const game = gameRef.current;
     if (!game) return;
-    if (side === "slash") {
+    if (side === "grab") {
+      game.setTouch({ grab: on });
+      if (on) buzz(8);
+    } else if (side === "slash") {
       game.setTouch({ slash: on });
       if (on) buzz(8);
     } else if (side === "up") {
@@ -701,6 +705,14 @@ export function GameApp() {
                     { label: "Garage", icon: Car, onClick: () => setScreen("garage") },
                     { label: "Wardrobe", icon: Shirt, onClick: () => setScreen("wardrobe") },
                     { label: "Levels", icon: MapIcon, onClick: () => setScreen("select") },
+                    {
+                      label: "Replay tutorial",
+                      icon: BookOpen,
+                      onClick: () => {
+                        gameRef.current?.resetGuide?.();
+                        gameRef.current?.resume();
+                      },
+                    },
                     { label: "Quit to title", icon: LogOut, onClick: goTitle },
                   ]
                 : [
@@ -767,6 +779,7 @@ export function GameApp() {
             live={padsLive}
             hintCross={hud.padAction.toUpperCase()}
             hintCircle={(hud.padExtra ?? hud.padAction).toUpperCase()}
+            hintTriangle={hud.mode === "lots" && hud.padTri ? hud.padTri.toUpperCase() : "UP"}
             onStick={(x, y) => {
               padMove.current.analogX = x;
               padMove.current.stickDown = y > 0.55;
@@ -779,6 +792,10 @@ export function GameApp() {
               flushPadMove();
             }}
             onTriangle={(on) => {
+              if (hud.mode === "lots" && hud.padTri) {
+                touch("grab", on);
+                return;
+              }
               touch("up", on);
               holdJump(on);
             }}
@@ -876,7 +893,17 @@ function Title({
           <p>
             <span className="font-pixel text-[10px] uppercase tracking-wide text-gold">Pad</span>
             <br />
-            Stick moves. ✕ jumps. ○ is the extra: slash in Cells, hop on EDSA, fire in Invaders, pick in Jed's Deal. △ up · □ drop. Keyboard stays A/D left-right, W/Space jump, F slash.
+            Stick moves. ✕ jumps. ○ is the extra: hit on the lots, slash in Cells, hop on EDSA, fire in Invaders, pick in Jed's Deal. △ grabs on the lots (up elsewhere) · □ drop. Keyboard stays A/D left-right, W/Space jump, F hit, E grab.
+          </p>
+          <p>
+            <span className="font-pixel text-[10px] uppercase tracking-wide text-gold">Weapons</span>
+            <br />
+            Tools lie on the lots and drop from every foe you KO. GRAB (△ · E · right-click) picks one up, swaps it with what's on the floor, or throws what you hold. Thrown tools knock foes down — hit or stomp a downed foe to FINISH for double pay. Empty price tagger? Throw it.
+          </p>
+          <p>
+            <span className="font-pixel text-[10px] uppercase tracking-wide text-gold">Field guide</span>
+            <br />
+            The first time a new foe, hazard or weapon shows up, the lot freezes and briefs you. Pause → Replay tutorial to see them again.
           </p>
           <p>
             <span className="font-pixel text-[10px] uppercase tracking-wide text-gold">Boss John</span>
